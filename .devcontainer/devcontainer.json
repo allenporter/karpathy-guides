@@ -4,4 +4,8 @@
 		"context": "..",
 		"dockerfile": "../Dockerfile"
 	},
+	"runArgs": [
+		"--gpus",
+		"all"
+	],
 }
