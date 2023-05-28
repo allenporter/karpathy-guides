@@ -109,11 +109,15 @@ class MultiHead(nn.Module):
         """Initialize MultiHead."""
         super().__init__()
         self.heads = nn.ModuleList([ Head(head_size) for _ in range(num_heads) ])
+        self.proj = nn.Linear(N_EMBED, N_EMBED)
 
     def forward(self, x: torch.tensor) -> torch.tensor:
         """..."""
         # Concatenating over the channel dimension
-        return torch.cat([h(x) for h in self.heads], dim=-1)
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        # Projection back into the linear pathway
+        out = self.proj(out)
+        return out
 
 
 class FeedForward(nn.Module):
@@ -126,9 +130,12 @@ class FeedForward(nn.Module):
     def __init__(self, n_embed: int) -> None:
         """Initialize FeedForward."""
         super().__init__()
+        # The residual block on the side has a bigger layer (4x)
         self.net = nn.Sequential(
-            nn.Linear(n_embed, n_embed),
+            nn.Linear(n_embed, 4 * n_embed),
             nn.ReLU(),
+            # Projection layer going back into the residual pathway
+            nn.Linear(4 * n_embed, n_embed),
         )
 
     def forward(self, x: torch.tensor) -> torch.tensor:
@@ -157,10 +164,12 @@ class Block(nn.Module):
 
     def forward(self, x: torch.tensor) -> torch.tensor:
         """..."""
-        x = self.sa_heads(x)  # Apply multiple heads of self-attention (B, T, C)
+        # Adding 'x' here is the residual inputs. They kick in over time to help with
+        # optimization without interfering too much with initialization.
+        x = x + self.sa_heads(x)  # Apply multiple heads of self-attention (B, T, C)
         # Two feed-forward networks, applied to each position separately and independently.
         # Once self attention has gathered all the data, we think on the data individually.
-        x = self.ffwd(x)  # (B, T, C)
+        x = x+ self.ffwd(x)  # (B, T, C)
         return x
 
 
