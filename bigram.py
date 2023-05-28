@@ -7,17 +7,23 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-
-BATCH_SIZE = 32
-BLOCK_SIZE = 8
+# The scaled up values used in the video are shown as my macbook can't handle them.
+BATCH_SIZE = 32  # 64
+BLOCK_SIZE = 8  # 256
 LOSS_RATE = 1e-3
-EVAL_INTERVAL = 300
-EVAL_ITERATIONS = 200
-LEARNING_RATE = 1e-3  # Picked for self attention needing lower rate
+EVAL_INTERVAL = 500
+EVAL_ITERATIONS = 500
+LEARNING_RATE = 1e-4  # Picked for self attention needing lower rate
 MAX_ITERS = 5000
 MAX_TOKENS = 1000
+
+# N_EMBED=32 and NUM_HEADS=4 results in heads of 8-dimensional attention (32/4)
+# N_EMBED=384 and NUM_HEADS=6 results in heads of 64-dimensional attention (385/64)
 N_EMBED = 32
-NUM_HEADS = 4  # Results in 4 heads of 8-dimenional attention (32/4=8)
+NUM_HEADS = 4 
+
+N_LAYER = 3  # 6
+DROPOUT = 0.2
 
 #device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 device = torch.device("cpu")
@@ -75,6 +81,7 @@ class Head(nn.Module):
         self.value = nn.Linear(N_EMBED, head_size, bias=False)
         # Not a parameter of the module, but a buffer
         self.register_buffer('tril', torch.tril(torch.ones(BLOCK_SIZE, BLOCK_SIZE)))
+        self.dropout = nn.Dropout(DROPOUT)
 
     def forward(self, x: torch.tensor) -> torch.tensor:
         """..."""
@@ -94,6 +101,10 @@ class Head(nn.Module):
         # decoder block so that nodes in the future don't talk to the past.
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1)  # (B, T, T)
+        # Randomly prevent some of the nodes from communicating. Trains an ensemble of
+        # sub-networks and merges after training. This is a regularization technique
+        # to prevent overfitting.
+        wei = self.dropout(wei)
 
         # Aggregate elements. You can think of 'x' as private information to this token.
         # v is the thing that gets aggregated that 'x' is advertising.
@@ -110,6 +121,9 @@ class MultiHead(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([ Head(head_size) for _ in range(num_heads) ])
         self.proj = nn.Linear(N_EMBED, N_EMBED)
+        # Right before the  connection back into the residual pathway
+        self.dropout = nn.Dropout(DROPOUT)
+
 
     def forward(self, x: torch.tensor) -> torch.tensor:
         """..."""
@@ -117,6 +131,7 @@ class MultiHead(nn.Module):
         out = torch.cat([h(x) for h in self.heads], dim=-1)
         # Projection back into the linear pathway
         out = self.proj(out)
+        out = self.dropout(out)
         return out
 
 
@@ -136,6 +151,8 @@ class FeedForward(nn.Module):
             nn.ReLU(),
             # Projection layer going back into the residual pathway
             nn.Linear(4 * n_embed, n_embed),
+            # Right before the  connection back into the residual pathway
+            nn.Dropout(DROPOUT),
         )
 
     def forward(self, x: torch.tensor) -> torch.tensor:
@@ -180,9 +197,6 @@ class Block(nn.Module):
         # Two feed-forward networks, applied to each position separately and independently.
         # Once self attention has gathered all the data, we think on the data individually.
         x = x+ self.ffwd(self.ln2(x))  # (B, T, C)
-        
-
-
         return x
 
 
@@ -200,13 +214,9 @@ class BigramLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(tokenizer.vocab_size, N_EMBED)
         self.position_embedding_table = nn.Embedding(BLOCK_SIZE, N_EMBED)
         self.blocks = nn.Sequential(
-            Block(n_embed=N_EMBED, n_head=NUM_HEADS),
-            Block(n_embed=N_EMBED, n_head=NUM_HEADS),
-            Block(n_embed=N_EMBED, n_head=NUM_HEADS),
-            # There is a layer norm at the end of the transformer right before the
-            # linear layer that decodes the vocabulary.
-            nn.LayerNorm(N_EMBED),
+            *[Block(n_embed=N_EMBED, n_head=NUM_HEADS) for _ in range(N_LAYER)]
         )
+        self.ln_f = nn.LayerNorm(N_EMBED)
         self.lm_head = nn.Linear(N_EMBED, tokenizer.vocab_size)
 
     def forward(self, idx: torch.tensor, targets: Union[torch.tensor, None] = None) -> tuple[torch.tensor, Union[torch.tensor, None]]:
@@ -221,6 +231,9 @@ class BigramLanguageModel(nn.Module):
         x = tok_emb + pos_emb # (B, T, C)
         # Apply the multi-head self-attention and feed forward blocks
         x = self.blocks(x)  #  (B, T, C)
+        # There is a layer norm at the end of the transformer right before the
+        # linear layer that decodes the vocabulary.
+        x = self.ln_f(x)  # (B, T, C)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         loss: torch.tensor | None = None
