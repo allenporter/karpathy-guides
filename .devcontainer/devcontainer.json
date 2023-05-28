@@ -1,0 +1,7 @@
+{
+	"name": "Python Environment",
+	"build": {
+		"context": "..",
+		"dockerfile": "../Dockerfile"
+	},
+}
