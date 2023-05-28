@@ -14,9 +14,10 @@ LOSS_RATE = 1e-3
 EVAL_INTERVAL = 300
 EVAL_ITERATIONS = 200
 LEARNING_RATE = 1e-3  # Picked for self attention needing lower rate
-MAX_ITERS = 3000
+MAX_ITERS = 5000
 MAX_TOKENS = 1000
 N_EMBED = 32
+NUM_HEADS = 4  # Results in 4 heads of 8-dimenional attention (32/4=8)
 
 #device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 device = torch.device("cpu")
@@ -101,6 +102,40 @@ class Head(nn.Module):
         return out
 
 
+class MultiHead(nn.Module):
+    """Multiple heads of self-attention in parallel."""
+
+    def __init__(self, num_heads: int, head_size: int) -> None:
+        """Initialize MultiHead."""
+        super().__init__()
+        self.heads = nn.ModuleList([ Head(head_size) for _ in range(num_heads) ])
+
+    def forward(self, x: torch.tensor) -> torch.tensor:
+        """..."""
+        # Concatenating over the channel dimension
+        return torch.cat([h(x) for h in self.heads], dim=-1)
+
+
+class FeedForward(nn.Module):
+    """Position wise feed forward module.
+
+    A simple linear layer followed by a non-linearity.
+    From the attenetion paper: Two linear transformations with an ReLU activation in between.
+    """
+
+    def __init__(self, n_embed: int) -> None:
+        """Initialize FeedForward."""
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embed, n_embed),
+            nn.ReLU(),
+        )
+
+    def forward(self, x: torch.tensor) -> torch.tensor:
+        """..."""
+        return self.net(x)
+
+
 class BigramLanguageModel(nn.Module):
     """A Bigram Language Model.
     
@@ -114,7 +149,8 @@ class BigramLanguageModel(nn.Module):
         self.tokenizer = tokenizer
         self.token_embedding_table = nn.Embedding(tokenizer.vocab_size, N_EMBED)
         self.position_embedding_table = nn.Embedding(BLOCK_SIZE, N_EMBED)
-        self.sa_head = Head(N_EMBED)
+        self.sa_heads = MultiHead(NUM_HEADS, N_EMBED//NUM_HEADS)
+        self.ffwd = FeedForward(N_EMBED)
         self.lm_head = nn.Linear(N_EMBED, tokenizer.vocab_size)
 
     def forward(self, idx: torch.tensor, targets: Union[torch.tensor, None] = None) -> tuple[torch.tensor, Union[torch.tensor, None]]:
@@ -127,7 +163,10 @@ class BigramLanguageModel(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
         # x holds the token embeddings as well as the positions they occur
         x = tok_emb + pos_emb # (B, T, C)
-        x = self.sa_head(x)  # Apply one head of self-attention (B, T, C)
+        x = self.sa_heads(x)  # Apply one head of self-attention (B, T, C)
+        # Two feed-forward networks, applied to each position separately and independently.
+        # Once self attention has gathered all the data, we think on the data individually.
+        x = self.ffwd(x)  # (B, T, C)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         loss: torch.tensor | None = None
