@@ -13,7 +13,7 @@ BLOCK_SIZE = 8
 LOSS_RATE = 1e-3
 EVAL_INTERVAL = 300
 EVAL_ITERATIONS = 200
-LEARNING_RATE = 1e-2
+LEARNING_RATE = 1e-3  # Picked for self attention needing lower rate
 MAX_ITERS = 3000
 MAX_TOKENS = 1000
 N_EMBED = 32
@@ -59,6 +59,48 @@ class SimpleTokenizer(Tokenizer):
         return "".join([ self.itos[i] for i in input ])
 
 
+class Head(nn.Module):
+    """One single head of self attention."""
+
+    def __init__(self, head_size: int) -> None:
+        """Initialize Head."""
+        super().__init__()
+        # Every node at every position emits a query and a key.
+        # - The query vector is roughly: What am i looking for
+        # - The key vector is roughly: what do i contain
+        # - The value is roughly: what do i advertise for aggregation.
+        self.key = nn.Linear(N_EMBED, head_size, bias=False)
+        self.query = nn.Linear(N_EMBED, head_size, bias=False)
+        self.value = nn.Linear(N_EMBED, head_size, bias=False)
+        # Not a parameter of the module, but a buffer
+        self.register_buffer('tril', torch.tril(torch.ones(BLOCK_SIZE, BLOCK_SIZE)))
+
+    def forward(self, x: torch.tensor) -> torch.tensor:
+        """..."""
+        B, T, C = x.shape
+        k = self.key(x)  # (B, T, C)
+        q = self.query(x)  # (B, T, C)
+
+        # Compute attention scores ("affinities")
+        # Wei now tells us in a data dependent manner how much data to aggregate from
+        # any of the tokens in the past
+        # Don't transpose the B, just the last two.
+        # Batch dimensions are not talking across each other. There are "B" separate pools happening.
+        # Normalized using scaled attention
+        wei = q @ k.transpose(-2, -1) * C**-0.5 # (B, T, 16) @ (B, 16, T) -> (B, T, T)
+
+        # If this were an encoder block all could talk to each other. We're using this as a
+        # decoder block so that nodes in the future don't talk to the past.
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        wei = F.softmax(wei, dim=-1)  # (B, T, T)
+
+        # Aggregate elements. You can think of 'x' as private information to this token.
+        # v is the thing that gets aggregated that 'x' is advertising.
+        v = self.value(x)  # (B, T, C)
+        out = wei @ v  # (B, T, T) @ (B, T, C) -> (B, T, C)
+        return out
+
+
 class BigramLanguageModel(nn.Module):
     """A Bigram Language Model.
     
@@ -72,6 +114,7 @@ class BigramLanguageModel(nn.Module):
         self.tokenizer = tokenizer
         self.token_embedding_table = nn.Embedding(tokenizer.vocab_size, N_EMBED)
         self.position_embedding_table = nn.Embedding(BLOCK_SIZE, N_EMBED)
+        self.sa_head = Head(N_EMBED)
         self.lm_head = nn.Linear(N_EMBED, tokenizer.vocab_size)
 
     def forward(self, idx: torch.tensor, targets: Union[torch.tensor, None] = None) -> tuple[torch.tensor, Union[torch.tensor, None]]:
@@ -84,6 +127,7 @@ class BigramLanguageModel(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
         # x holds the token embeddings as well as the positions they occur
         x = tok_emb + pos_emb # (B, T, C)
+        x = self.sa_head(x)  # Apply one head of self-attention (B, T, C)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         loss: torch.tensor | None = None
@@ -108,8 +152,11 @@ class BigramLanguageModel(nn.Module):
         """
         # idx is (B, T) array of indicies in the current context
         for _ in range(max_new_tokens):
+            # Truncate idx to the last block_size tokens given we're using a positional
+            # embeddding in forward.
+            idx_cond = idx[:, -BLOCK_SIZE:]
             # get the prediction
-            logits, loss = self(idx)
+            logits, loss = self(idx_cond)
             # Focus only on the last time step
             logits = logits[:, -1, :] # becomes (B, C)
 
