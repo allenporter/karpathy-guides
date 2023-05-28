@@ -160,16 +160,29 @@ class Block(nn.Module):
         head_size = n_embed // n_head
         self.sa_heads = MultiHead(n_head, head_size)
         self.ffwd = FeedForward(n_embed)
+        self.ln1 = nn.LayerNorm(n_embed)
+        self.ln2 = nn.LayerNorm(n_embed)
 
 
     def forward(self, x: torch.tensor) -> torch.tensor:
         """..."""
+        # Layer norm has changed since the original attention paper. In the paper, they
+        # are applied after the transformation. Now it is applied before the
+        # transformation (pre-norm forumulation).
+        #
+        # When normalization (mean and var) is applied to features are taken over
+        # the n_embed. This is effectively normalizing the features at initialization.
+        # However, the layer norm has trainable parameters so they may not be over time.
+
         # Adding 'x' here is the residual inputs. They kick in over time to help with
         # optimization without interfering too much with initialization.
-        x = x + self.sa_heads(x)  # Apply multiple heads of self-attention (B, T, C)
+        x = x + self.sa_heads(self.ln1(x))  # Apply multiple heads of self-attention (B, T, C)
         # Two feed-forward networks, applied to each position separately and independently.
         # Once self attention has gathered all the data, we think on the data individually.
-        x = x+ self.ffwd(x)  # (B, T, C)
+        x = x+ self.ffwd(self.ln2(x))  # (B, T, C)
+        
+
+
         return x
 
 
@@ -190,6 +203,9 @@ class BigramLanguageModel(nn.Module):
             Block(n_embed=N_EMBED, n_head=NUM_HEADS),
             Block(n_embed=N_EMBED, n_head=NUM_HEADS),
             Block(n_embed=N_EMBED, n_head=NUM_HEADS),
+            # There is a layer norm at the end of the transformer right before the
+            # linear layer that decodes the vocabulary.
+            nn.LayerNorm(N_EMBED),
         )
         self.lm_head = nn.Linear(N_EMBED, tokenizer.vocab_size)
 
