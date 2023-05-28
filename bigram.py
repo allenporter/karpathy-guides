@@ -136,6 +136,34 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 
+class Block(nn.Module):
+    """Transforer block: communication (multi-head) followed by computation (feed-forward).
+    
+    This block is similar to the block on the right of the self attention paper,
+    but we're not doing cross-attention.
+    """
+
+    def __init__(self, n_embed: int, n_head: int) -> torch.tensor:
+        """Initialize Block.
+        
+        n_embed: The embedding dimension.
+        n_head: The number of heads we'd like.
+        """
+        super().__init__()
+        head_size = n_embed // n_head
+        self.sa_heads = MultiHead(n_head, head_size)
+        self.ffwd = FeedForward(n_embed)
+
+
+    def forward(self, x: torch.tensor) -> torch.tensor:
+        """..."""
+        x = self.sa_heads(x)  # Apply multiple heads of self-attention (B, T, C)
+        # Two feed-forward networks, applied to each position separately and independently.
+        # Once self attention has gathered all the data, we think on the data individually.
+        x = self.ffwd(x)  # (B, T, C)
+        return x
+
+
 class BigramLanguageModel(nn.Module):
     """A Bigram Language Model.
     
@@ -149,8 +177,11 @@ class BigramLanguageModel(nn.Module):
         self.tokenizer = tokenizer
         self.token_embedding_table = nn.Embedding(tokenizer.vocab_size, N_EMBED)
         self.position_embedding_table = nn.Embedding(BLOCK_SIZE, N_EMBED)
-        self.sa_heads = MultiHead(NUM_HEADS, N_EMBED//NUM_HEADS)
-        self.ffwd = FeedForward(N_EMBED)
+        self.blocks = nn.Sequential(
+            Block(n_embed=N_EMBED, n_head=NUM_HEADS),
+            Block(n_embed=N_EMBED, n_head=NUM_HEADS),
+            Block(n_embed=N_EMBED, n_head=NUM_HEADS),
+        )
         self.lm_head = nn.Linear(N_EMBED, tokenizer.vocab_size)
 
     def forward(self, idx: torch.tensor, targets: Union[torch.tensor, None] = None) -> tuple[torch.tensor, Union[torch.tensor, None]]:
@@ -163,10 +194,8 @@ class BigramLanguageModel(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
         # x holds the token embeddings as well as the positions they occur
         x = tok_emb + pos_emb # (B, T, C)
-        x = self.sa_heads(x)  # Apply one head of self-attention (B, T, C)
-        # Two feed-forward networks, applied to each position separately and independently.
-        # Once self attention has gathered all the data, we think on the data individually.
-        x = self.ffwd(x)  # (B, T, C)
+        # Apply the multi-head self-attention and feed forward blocks
+        x = self.blocks(x)  #  (B, T, C)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         loss: torch.tensor | None = None
@@ -244,8 +273,6 @@ def main() -> None:
     """Main entry point."""
 
     #torch.manual_seed(1337)
-
-
     content = read_corpus()
     chars = sorted(list(set(content)))
 
