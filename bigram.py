@@ -323,6 +323,7 @@ def main() -> None:
 
     model = BigramLanguageModel(simple)
     model = model.to(device)
+    print(sum(p.numel() for p in model.parameters())/1e6, "M parameters")
     
     # AdamW An advanced and much better optimizer than SGD
     optimizer = torch.optim.AdamW(model.parameters(), lr=LOSS_RATE)
