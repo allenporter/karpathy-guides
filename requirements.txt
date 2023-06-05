@@ -10,3 +10,4 @@ tensorflow_probability==0.20.1
 jax==0.4.10
 jaxlib==0.4.10
 pydot==1.4.2
+tqdm==4.65
