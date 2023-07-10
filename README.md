@@ -10,3 +10,12 @@ $ source venv/bin/activate
 $ pip install --upgrade pip
 $ pip3 install -r requirements.txt
 ```
+
+## Jax and Metal
+
+See https://developer.apple.com/metal/jax/
+
+Required manually setting a MacOS X SDK to build:
+```
+$ python build/build.py --bazel_options=--@xla//xla/python:enable_tpu=true --bazel_options="--macos_sdk_version=13.1"
+```
