@@ -96,7 +96,7 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = MLP(config)
 
-    def forward(self, x: tf.Tensor) -> tf.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Perform inference."""
         x = x + self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
