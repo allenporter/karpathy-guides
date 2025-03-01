@@ -30,7 +30,7 @@ class CausalSelfAttention(nn.Module):
         # Batch of key/query/value projects for all heads
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
         # Output projection
-        self.c_prox = nn.Linear(config.n_embd, config.n_embd)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
         # Regularization
         self.c_head = config.n_head
         self.n_embed = config.n_embd
@@ -81,7 +81,7 @@ class MLP(nn.Module):
         """Perform inference."""
         x = self.c_fc(x)
         x = self.gelu(x)
-        x = self.c_prox(x)
+        x = self.c_proj(x)
         return x
 
 
