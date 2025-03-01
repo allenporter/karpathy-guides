@@ -119,6 +119,24 @@ class GPT(nn.Module):
         # Final classifier
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Perform generation."""
+        B, T = x.size()
+        assert T <= self.config.block_size  # Max sequence length
+        # Forward token and positional embeddings 
+        pos = torch.arange(0, T, dtype=torch.long, devices=x.device)  # Shape (T)
+        pos_emb = self.transformer.wpe(pos)  # (T, n_emb)
+        tok_emb = self.transformer.wte(x)  # (B, T, n_emb)
+        x = tok_emb + pos_emb
+        # Forward transformer blocks
+        for block in self.transformer.h:
+            x = block(x)
+        # Forward the final layernorm
+        x = self.transformer.ln_f(x)
+        logits = self.lm_head(x)  # (B, T, vocab_size)
+        return logits
+
+
     @classmethod
     def from_pretrained(cls, model_type: str) -> 'GPT':
         """Load the GPT from the pretrained model."""
