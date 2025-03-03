@@ -16,3 +16,5 @@ Will reference GPT2 and GPT3 papaers.
 - B=16, T=1024 - Default precision:
    380ms per step, 42k tok/sec
 - bfloat16 - Did not increase performance for me.
+- torch.compile()
+  - 139ms, 118k tok/sec. 2.3x speedup
