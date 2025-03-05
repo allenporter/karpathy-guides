@@ -18,3 +18,7 @@ Will reference GPT2 and GPT3 papaers.
 - bfloat16 - Did not increase performance for me.
 - torch.compile()
   - 139ms, 118k tok/sec. 2.3x speedup
+- flash attention
+  - 95ms, 171k tok/sec
+- make vocab size an even number (larger)
+  - 92.65ms, 176k tok/sec
